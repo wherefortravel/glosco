@@ -1,10 +1,15 @@
-use std::{io::{Write, Read, self, ErrorKind, Error}, net::{Ipv4Addr, Ipv6Addr, IpAddr}, array, time::{SystemTime, Duration}, string};
+use std::{io::{Write, Read, self, ErrorKind, Error}, net::{Ipv4Addr, Ipv6Addr, IpAddr}, array, time::{SystemTime, Duration}, string, marker::PhantomData};
 
-use crate::observe::{Protocol, Closed, Problem, State, Connection, Endpoint, Message};
+use crate::observe::{Protocol, Closed, Problem, State, Connection, Endpoint, Message, Resolution, Name};
 
 pub trait Coder: Sized {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
     fn decode<R: Read>(reader: &mut R) -> io::Result<Self>;
+}
+
+pub trait Length: Copy + Coder {
+    fn as_usize(self) -> usize;
+    fn from_usize(u: usize) -> Self;
 }
 
 pub const V4_MARK: u8 = 1;
@@ -19,6 +24,49 @@ pub const ACTIVE_MARK: u8 = 1;
 pub const ENDED_MARK: u8 = 2;
 pub const FAILED_MARK: u8 = 3;
 pub const NAME_MARK: u8 = 4;
+pub const ADDR_MARK: u8 = 1;
+pub const ALIAS_MARK: u8 = 2;
+pub const SVC_MARK: u8 = 3;
+pub const TEXT_MARK: u8 = 4;
+
+// The PhantomData represents Vec's own ownership of its length, if anyone asks
+pub struct CodingVec<T, Width=u8>(pub Vec<T>, PhantomData<Width>);
+
+impl<T, Width> CodingVec<T, Width> {
+    pub fn new(vec: Vec<T>) -> Self {
+        Self(vec, PhantomData)
+    }
+}
+
+impl Length for u8 {
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+
+    fn from_usize(u: usize) -> Self {
+        u as Self
+    }
+}
+
+impl Length for u16 {
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+
+    fn from_usize(u: usize) -> Self {
+        u as Self
+    }
+}
+
+impl Length for u32 {
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+
+    fn from_usize(u: usize) -> Self {
+        u as Self
+    }
+}
 
 impl Coder for Ipv4Addr {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -257,6 +305,67 @@ impl Coder for State {
     }
 }
 
+impl Resolution {
+    pub fn number(&self) -> u8 {
+        match self {
+            Self::Address(_) => ADDR_MARK,
+            Self::Alias(_) => ALIAS_MARK,
+            Self::Service(_, _) => SVC_MARK,
+            Self::Text(_) => TEXT_MARK,
+        }
+    }
+}
+
+impl Coder for Resolution {
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.number().encode(writer)?;
+        match self {
+            Self::Address(addr) => addr.encode(writer),
+            Self::Alias(alias) => alias.encode(writer),
+            Self::Service(name, port) => {
+                name.encode(writer)?;
+                port.encode(writer)
+            },
+            Self::Text(texts) => {
+                CodingVec::<CodingVec<u8>, u8>::new(texts.iter().cloned().map(CodingVec::<u8, u8>::new).collect()).encode(writer)
+            },
+        }
+    }
+
+    fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let mark = u8::decode(reader)?;
+        match mark {
+            ADDR_MARK => Ok(Self::Address(IpAddr::decode(reader)?)),
+            ALIAS_MARK => Ok(Self::Alias(String::decode(reader)?)),
+            SVC_MARK => {
+                let name = String::decode(reader)?;
+                let port = Option::<u16>::decode(reader)?;
+                Ok(Self::Service(name, port))
+            },
+            TEXT_MARK => {
+                Ok(Self::Text(CodingVec::<CodingVec<u8, u8>, u8>::decode(reader)?.0
+                              .into_iter()
+                              .map(|v| v.0)
+                              .collect()))
+            },
+            _ => Err(ErrorKind::InvalidInput.into()),
+        }
+    }
+}
+
+impl Coder for Name {
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.name.encode(writer)?;
+        self.address.encode(writer)
+    }
+
+    fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let name = String::decode(reader)?;
+        let address = Option::<Resolution>::decode(reader)?;
+        Ok(Self { name, address })
+    }
+}
+
 impl Coder for Message {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         match self {
@@ -274,9 +383,10 @@ impl Coder for Message {
                 state.encode(writer)?;
                 problem.encode(writer)
             },
-            Self::Name(nm) => {
+            Self::Name(state, names) => {
                 writer.write_all(&[NAME_MARK])?;
-                nm.encode(writer)
+                state.encode(writer)?;
+                CodingVec::<Name, u8>::new(names.clone()).encode(writer)
             }
         }
     }
@@ -299,33 +409,59 @@ impl Coder for Message {
                 let problem = Problem::decode(reader)?;
                 Ok(Self::Failed(state, problem))
             },
+            NAME_MARK => {
+                let state = State::decode(reader)?;
+                Ok(Self::Name(state, CodingVec::<Name, u8>::decode(reader)?.0))
+            },
             _ => Err(ErrorKind::InvalidInput.into()),
         }
     }
 }
 
-impl Coder for Vec<u8> {
+impl Coder for String {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        (self.len() as u16).encode(writer)?;
-        println!("frame write: {:?}", self.len());
-        writer.write_all(self)
+        CodingVec::<_, u16>::new(self.as_bytes().to_vec()).encode(writer)
     }
 
     fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let len = u16::decode(reader)?;
-        println!("frame read: {:?}", len);
-        let mut this = vec![0; len as usize];
-        reader.read_exact(&mut this)?;
-        Ok(this)
+        String::from_utf8(CodingVec::<u8, u16>::decode(reader)?.0).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 }
 
-impl Coder for String {
+impl<T: Coder> Coder for Option<T> {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.as_bytes().to_vec().encode(writer)
+        if let Some(inner) = self {
+            1u8.encode(writer)?;
+            inner.encode(writer)
+        } else {
+            0u8.encode(writer)
+        }
     }
 
     fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
-        String::from_utf8(Vec::<u8>::decode(reader)?).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+        let mark = u8::decode(reader)?;
+        if mark == 1u8 {
+            Ok(Some(T::decode(reader)?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl<T: Coder, Width: Length> Coder for CodingVec<T, Width> {
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Width::encode(&Width::from_usize(self.0.len()), writer)?;
+        for elem in self.0.iter() {
+            elem.encode(writer)?;
+        }
+        Ok(())
+    }
+
+    fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let len: usize = Width::decode(reader)?.as_usize();
+        Ok(CodingVec::<T, Width>::new((0 .. len).try_fold(Vec::with_capacity(len), |mut vec, _| {
+            vec.push(T::decode(reader)?);
+            Ok::<_, io::Error>(vec)
+        })?))
     }
 }

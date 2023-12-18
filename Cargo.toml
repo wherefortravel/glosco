@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 pcap = "^1.1"
 clap = { version = "^4.4", features = ["derive"] }
-packet = "^0.1.4"
+pktparse = "^0.7"
 tokio = { version = "1", features = ["full"] }
 futures = "^0.3"
 rusqlite = { version = "^0.30", features = ["bundled", "trace"] }

@@ -1,6 +1,6 @@
 use std::{io::{self, Write}, thread, net::{UdpSocket, SocketAddr, TcpStream}, thread::JoinHandle, sync::{mpsc, Arc, Mutex}, cell::RefCell, time::{Duration, Instant}};
 
-use crate::coding::Coder;
+use crate::coding::{Coder, CodingVec};
 
 #[derive(Debug, Clone, Default)]
 pub struct ClientConfig {
@@ -10,7 +10,7 @@ pub struct ClientConfig {
 
 #[derive(Debug)]
 pub struct Client {
-    senders: Vec<mpsc::Sender<Arc<Vec<u8>>>>,
+    senders: Vec<mpsc::SyncSender<Arc<Vec<u8>>>>,
 }
 
 const RETRY_BACKOFF_WIN: (usize, Duration) = (5, Duration::new(10, 0));
@@ -45,6 +45,8 @@ fn client_thread(addr: SocketAddr, receiver: mpsc::Receiver<Arc<Vec<u8>>>, hello
 }
 
 impl ClientConfig {
+    pub const BACKLOG: usize = 1024;
+
     pub fn new(ident: String) -> Self {
         Self {
             ident,
@@ -60,9 +62,9 @@ impl ClientConfig {
         let mut hello: Vec<u8> = Vec::with_capacity(self.ident.as_bytes().len() + 4);
         self.ident.encode(&mut hello).unwrap();
         let hello = Arc::new(hello);
-        let mut senders: Vec<mpsc::Sender<Arc<Vec<u8>>>> = Vec::new();
+        let mut senders: Vec<mpsc::SyncSender<Arc<Vec<u8>>>> = Vec::new();
         for addr in self.dests.into_iter() {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::sync_channel(Self::BACKLOG);
             senders.push(sender);
             let hello = hello.clone();
             thread::spawn(move || client_thread(addr, receiver, hello));
@@ -80,10 +82,14 @@ impl Client {
 
     pub fn send_frame(&self, bytes: &Vec<u8>) {
         let mut frame = Vec::with_capacity(bytes.len() + 4);
-        bytes.encode(&mut frame).unwrap();
+        CodingVec::<u8, u32>::new(bytes.clone()).encode(&mut frame).unwrap();
         let message = Arc::new(frame);
         for sender in self.senders.iter() {
-            let _ = sender.send(message.clone());
+            // If this errors with Full, don't care--we drop the message.
+            // If this errors with Disconnected, we should evict the sender, but
+            // the architecture isn't good enough yet to do that. It's fairly harmless
+            // to keep that handle around.
+            let _ = sender.try_send(message.clone());
         }
     }
 }

@@ -1,11 +1,13 @@
 use std::{net::{ToSocketAddrs, TcpListener, SocketAddr, TcpStream}, thread, string, time::{SystemTime, Duration}};
 
 use clap::{arg, Parser, command};
-use coding::{Coder, TCP_MARK, TMOUT_MARK};
+use coding::{Coder, TCP_MARK, TMOUT_MARK, CodingVec};
 use observe::{ObserverConfig, Message};
 use pcap::Device;
 use rusqlite::{params, types::Null, named_params};
 use sync::ClientConfig;
+
+use crate::observe::Resolution;
 
 pub mod observe;
 //pub mod mesh;
@@ -85,9 +87,11 @@ fn main_client(args: Args) {
 
     let namespace = observer.namespace();
 
-    for message in observer {
-        println!("{:?}", message);
-        client.send(&message);
+    for bundle in observer {
+        for message in bundle.into_iter() {
+            println!("{:?}", message);
+            client.send(&message);
+        }
     }
 }
 
@@ -106,7 +110,7 @@ fn maint_thread(path: String, period: Duration, timeout: Duration) {
             let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
                 .expect("time is before UNIX epoch!")
                 .as_secs_f64();
-            db.trace(Some(|s| println!("{}", s)));
+            // db.trace(Some(|s| println!("{}", s)));
             db.execute("
                 INSERT INTO state
                 (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, close, pkind, pcode)
@@ -144,11 +148,15 @@ fn main_server(args: Args) {
             CREATE INDEX IF NOT EXISTS state_ident ON state (ident);
             CREATE INDEX IF NOT EXISTS state_src ON state (srchost, srcport);
             CREATE INDEX IF NOT EXISTS state_dst ON state (dsthost, dstport);
+
             CREATE VIEW IF NOT EXISTS latest_ins AS
             SELECT max(instime), * FROM state
             GROUP BY ident, srchost, srcport, dsthost, dstport, proto;
             CREATE INDEX IF NOT EXISTS latest_ins_idx
             ON STATE (ident, srchost, srcport, dsthost, dstport, proto);
+
+            CREATE TABLE IF NOT EXISTS names
+            (instime, querier, responder, name, addr, port, text);
             ",
         ).expect("failed to initialize database connection");
     }
@@ -178,19 +186,15 @@ fn to_float_secs(st: SystemTime) -> f64 {
 }
 
 fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connection) {
-    let ident = if let Ok(frame) = Vec::<u8>::decode(&mut client) {
-        if let Ok(str) = String::from_utf8(frame) {
-            str
-        } else {
-            println!("failed to parse initial ident");
-            return;
-        }
+    let ident = if let Ok(frame) = String::decode(&mut client) {
+        frame
     } else {
         println!("failed to read initial ident");
         return;
     };
     let peername = format!("{:?}", peer);
-    while let Ok(frame) = Vec::<u8>::decode(&mut client) {
+    while let Ok(frame) = CodingVec::<u8, u32>::decode(&mut client) {
+        let frame = frame.0;
         if let Ok(message) = Message::decode(&mut frame.as_slice()) {
             println!("{}@{:?}: {:?}", ident, peer, message);
             let mut stmt = db.prepare_cached(
@@ -237,8 +241,62 @@ fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connecti
                         Null, problem.kind, problem.code,
                     ]).expect("failed to exec statement");
                 },
-                Message::Name(name) => {
-                    todo!();
+                Message::Name(state, names) => {
+                    let mut name_stmt = db.prepare_cached("
+                        INSERT INTO names
+                        (instime, querier, responder, name, addr, port, text)
+                        VALUES
+                        (?, ?, ?, ?, ?, ?, ?);
+                    ").expect("failed to prepare name statement");
+                    let (querier, responder) = if state.connection.src.port == 53 {
+                        (state.connection.dst.addr, state.connection.src.addr)
+                    } else {
+                        (state.connection.src.addr, state.connection.dst.addr)
+                    };
+                    for name in names {
+                        let nm = name.name;
+                        let (addr, port, text) = if let Some(res) = name.address {
+                            (
+                                // addr
+                                match &res {
+                                    Resolution::Address(addr) => Some(addr.to_string()),
+                                    Resolution::Alias(name) => Some(name.clone()),
+                                    Resolution::Service(name, _) => Some(name.clone()),
+                                    Resolution::Text(_) => None,
+                                },
+                                // port
+                                match &res {
+                                    Resolution::Address(_) => None,
+                                    Resolution::Alias(_) => None,
+                                    Resolution::Service(_, port) => port.clone(),
+                                    Resolution::Text(_) => None,
+                                },
+                                // text {
+                                match &res {
+                                    Resolution::Text(text) => Some(
+                                        text.iter().cloned().map(|v| {
+                                            let mut res = Vec::with_capacity(v.len() + 1);
+                                            res.push(v.len() as u8);
+                                            res.extend(v.iter());
+                                            res
+                                        }).fold(Vec::<u8>::new(), |mut vec, inner| {
+                                            vec.extend(inner.iter());
+                                            vec
+                                        })
+                                    ),
+                                    _ => None,
+                                },
+                            )
+                        } else {
+                            (None, None, None)
+                        };
+                        name_stmt.execute(params![
+                            to_float_secs(now),
+                            querier.to_string(),
+                            responder.to_string(),
+                            nm, addr, port, text,
+                        ]).expect("failed to execute name statement");
+                    }
                 }
             }
         }
