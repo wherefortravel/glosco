@@ -1,4 +1,4 @@
-use std::{io::{Write, Read, self, ErrorKind, Error}, net::{Ipv4Addr, Ipv6Addr, IpAddr}, array, time::{SystemTime, Duration}, string, marker::PhantomData};
+use std::{io::{Write, Read, self, ErrorKind, Error}, net::{Ipv4Addr, Ipv6Addr, IpAddr}, array, time::{SystemTime, Duration}, marker::PhantomData};
 
 use crate::observe::{Protocol, Closed, Problem, State, Connection, Endpoint, Message, Resolution, Name};
 

@@ -183,7 +183,7 @@ impl ObserverConfig {
             })
         }).collect();
         Ok(Observer {
-            packets, endpoint, threads,
+            packets, _endpoint: endpoint, _threads: threads,
             devices: self.devices,
             states: Default::default(),
         })
@@ -193,9 +193,9 @@ impl ObserverConfig {
 #[derive(Debug)]
 pub struct Observer {
     packets: mpsc::Receiver<Ingress>,
-    endpoint: mpsc::Sender<Ingress>,
+    _endpoint: mpsc::Sender<Ingress>,
     devices: Vec<Device>,
-    threads: Vec<JoinHandle<()>>,
+    _threads: Vec<JoinHandle<()>>,
     states: HashMap<Connection, Message>,
 }
 
@@ -279,7 +279,7 @@ impl Observer {
     }
 
     fn handle_tcp(&mut self, interface: usize, bytes: impl AsRef<[u8]>, hosts: HostPair) -> Vec<Message> {
-        if let Ok((rest, pkt)) = tcp::parse_tcp_header(bytes.as_ref()) {
+        if let Ok((_rest, pkt)) = tcp::parse_tcp_header(bytes.as_ref()) {
             let conn = Connection {
                 interface,
                 src: Endpoint { addr: hosts.src, port: pkt.source_port },

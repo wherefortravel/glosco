@@ -9,8 +9,16 @@ edition = "2021"
 pcap = "^1.1"
 clap = { version = "^4.4", features = ["derive"] }
 pktparse = "^0.7"
-tokio = { version = "1", features = ["full"] }
-futures = "^0.3"
-rusqlite = { version = "^0.30", features = ["bundled", "trace"] }
+rusqlite = { version = "^0.30", features = ["bundled", "trace"], optional = true }
 gethostname = "^0.4"
 dns-parser = "^0.8"
+
+[features]
+default = ["sqlite"]
+sqlite = ["dep:rusqlite"]
+
+[[bin]]
+name = "glosco_client"
+
+[[bin]]
+name = "glosco_server"

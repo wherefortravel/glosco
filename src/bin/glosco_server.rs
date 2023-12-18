@@ -1,98 +1,33 @@
-use std::{net::{ToSocketAddrs, TcpListener, SocketAddr, TcpStream}, thread, string, time::{SystemTime, Duration}};
+use std::{net::{TcpListener, SocketAddr, TcpStream}, thread, time::{SystemTime, Duration}};
 
 use clap::{arg, Parser, command};
-use coding::{Coder, TCP_MARK, TMOUT_MARK, CodingVec};
-use observe::{ObserverConfig, Message};
-use pcap::Device;
+use glosco::coding::{Coder, TCP_MARK, TMOUT_MARK, CodingVec};
+use glosco::observe::Message;
 use rusqlite::{params, types::Null, named_params};
-use sync::ClientConfig;
 
-use crate::observe::Resolution;
+use glosco::observe::Resolution;
 
-pub mod observe;
-//pub mod mesh;
-pub mod coding;
-pub mod sync;
 
 #[derive(Debug, Parser)]
 #[command(author = "Grissess", version = "0.1",
           about = "Track connection state globally across large networks",
           long_about = None)]
 struct Args {
-    /// Operating mode, one of "client" or "server"
-    #[arg(long, default_value = "client")]
-    mode: String,
-    
-    /// client: Interfaces, by name to use; if not provided, use all of them.
-    #[arg(short, long)]
-    interfaces: Option<Vec<String>>,
-    
-    /// client: Remote instances to which to connect
-    #[arg(short = 'R', long)]
-    remotes: Vec<String>,
-
-    /// client: Identity to advertise to server, defaults to hostname
-    #[arg(long)]
-    ident: Option<String>,
-
-    /// server: Bind address
+    /// Bind address
     #[arg(short = 'B', long, default_value = "0.0.0.0:12074")]
     bind: SocketAddr,
 
-    /// server: Database file
+    /// Database file
     #[arg(short, long, default_value = "glosco.db")]
     database: String,
 
-    /// server: Timeout on TCP connections, after which we assume they closed without notice
+    /// Timeout on TCP connections, after which we assume they closed without notice
     #[arg(long, default_value = "60")]
     tcp_timeout: f64,
 
-    /// server: Maintenance period--how often to do periodic database tasks
+    /// Maintenance period--how often to do periodic database tasks
     #[arg(long, default_value = "5")]
     maintenance: f64,
-}
-
-fn main() {
-    let args = Args::parse();
-
-    match args.mode.as_str() {
-        "client" => main_client(args),
-        "server" => main_server(args),
-        _ => panic!("unknown mode {:?}, try 'client' or 'server'", args.mode),
-    }
-}
-
-fn main_client(args: Args) {
-    let mut observer = ObserverConfig::default();
-
-    if let Some(intf) = args.interfaces {
-        for devname in intf {
-            observer.add_device(Device::from(&devname[..]));
-        }
-    }
-
-    let ident = args.ident.unwrap_or_else(|| {
-        gethostname::gethostname().into_string().expect("couldn't encode hostname")
-    });
-    let mut client = ClientConfig::new(ident);
-    for remote in args.remotes {
-        for addr in remote.to_socket_addrs().expect("failed to parse as socket address") {
-            client.add(addr);
-        }
-    }
-
-    let client = client.build().expect("failed to build remote client");
-
-    let mut observer = observer.start().expect("failed to start");
-
-    let namespace = observer.namespace();
-
-    for bundle in observer {
-        for message in bundle.into_iter() {
-            println!("{:?}", message);
-            client.send(&message);
-        }
-    }
 }
 
 fn maint_thread(path: String, period: Duration, timeout: Duration) {
@@ -100,7 +35,7 @@ fn maint_thread(path: String, period: Duration, timeout: Duration) {
     loop {
         thread::sleep(period);
         {
-            let mut db = rusqlite::Connection::open(path.clone()).expect("failed to open database to maintain");
+            let db = rusqlite::Connection::open(path.clone()).expect("failed to open database to maintain");
             db.pragma_update_and_check(None, "journal_mode", "WAL", |row| {
                 let journal_mode: String = row.get(0).expect("query did not return a result");
                 println!("post-assign journal_mode={}", journal_mode);
@@ -128,7 +63,9 @@ fn maint_thread(path: String, period: Duration, timeout: Duration) {
     }
 }
 
-fn main_server(args: Args) {
+fn main() {
+    let args = Args::parse();
+
     let sock = TcpListener::bind(args.bind).expect("failed to bind socket");
 
     {
