@@ -1,0 +1,8 @@
+[gd_resource type="Theme" format=3 uid="uid://dicd2vsd28h3y"]
+
+[resource]
+Graph/colors/conn_active = Color(0, 1, 0, 1)
+Graph/colors/conn_cless = Color(0, 0.498039, 0.498039, 1)
+Graph/colors/conn_ended = Color(0, 0, 0.498039, 1)
+Graph/colors/conn_failed = Color(1, 0, 0, 1)
+Graph/colors/conn_reset = Color(1, 0, 1, 1)

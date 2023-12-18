@@ -1,0 +1,112 @@
+[gd_scene load_steps=3 format=3 uid="uid://c6yh4662w4oix"]
+
+[ext_resource type="Script" path="res://app.gd" id="1_fkwp5"]
+[ext_resource type="PackedScene" uid="uid://c5bt6oxm6ci24" path="res://graph.tscn" id="1_jchdq"]
+
+[node name="App" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_fkwp5")
+
+[node name="RootContainer" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VLayout" type="VBoxContainer" parent="RootContainer"]
+layout_mode = 2
+
+[node name="MenuBar" type="MenuBar" parent="RootContainer/VLayout"]
+layout_mode = 2
+
+[node name="File" type="PopupMenu" parent="RootContainer/VLayout/MenuBar"]
+item_count = 1
+item_0/text = "Open"
+item_0/id = 0
+
+[node name="HSplitContainer" type="HSplitContainer" parent="RootContainer/VLayout"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="RootContainer/VLayout/HSplitContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="RootContainer/VLayout/HSplitContainer/SubViewportContainer"]
+handle_input_locally = false
+size = Vector2i(884, 613)
+render_target_update_mode = 4
+
+[node name="Graph" parent="RootContainer/VLayout/HSplitContainer/SubViewportContainer/SubViewport" instance=ExtResource("1_jchdq")]
+unique_name_in_owner = true
+history = 30.0
+update_period = 1000
+
+[node name="Props" type="TabContainer" parent="RootContainer/VLayout/HSplitContainer"]
+custom_minimum_size = Vector2(256, 0)
+layout_mode = 2
+
+[node name="Config" type="PanelContainer" parent="RootContainer/VLayout/HSplitContainer/Props"]
+layout_mode = 2
+
+[node name="ConfigLayout" type="VBoxContainer" parent="RootContainer/VLayout/HSplitContainer/Props/Config"]
+layout_mode = 2
+
+[node name="RefreshIntvLabel" type="Label" parent="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout"]
+layout_mode = 2
+text = "Refresh Interval"
+
+[node name="RefreshIntv" type="HSlider" parent="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout"]
+layout_mode = 2
+min_value = 10.0
+max_value = 10000.0
+value = 250.0
+exp_edit = true
+rounded = true
+
+[node name="HistLabel" type="Label" parent="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout"]
+layout_mode = 2
+text = "History Length
+"
+
+[node name="Hist" type="HSlider" parent="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout"]
+layout_mode = 2
+min_value = 1.0
+max_value = 1000.0
+value = 5.0
+exp_edit = true
+
+[node name="Perspective" type="PanelContainer" parent="RootContainer/VLayout/HSplitContainer/Props"]
+visible = false
+layout_mode = 2
+
+[node name="PerspectiveLayout" type="VBoxContainer" parent="RootContainer/VLayout/HSplitContainer/Props/Perspective"]
+layout_mode = 2
+
+[node name="IdentsLabel" type="Label" parent="RootContainer/VLayout/HSplitContainer/Props/Perspective/PerspectiveLayout"]
+layout_mode = 2
+text = "Idents:"
+
+[node name="Idents" type="ItemList" parent="RootContainer/VLayout/HSplitContainer/Props/Perspective/PerspectiveLayout"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+select_mode = 1
+
+[node name="IdentsReload" type="Button" parent="RootContainer/VLayout/HSplitContainer/Props/Perspective/PerspectiveLayout"]
+layout_mode = 2
+text = "(Re)Load"
+
+[connection signal="value_changed" from="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout/RefreshIntv" to="." method="_on_refresh_intv_value_changed"]
+[connection signal="value_changed" from="RootContainer/VLayout/HSplitContainer/Props/Config/ConfigLayout/Hist" to="." method="_on_hist_value_changed"]
+[connection signal="multi_selected" from="RootContainer/VLayout/HSplitContainer/Props/Perspective/PerspectiveLayout/Idents" to="." method="_on_idents_multi_selected"]
+[connection signal="pressed" from="RootContainer/VLayout/HSplitContainer/Props/Perspective/PerspectiveLayout/IdentsReload" to="." method="_on_idents_reload_pressed"]
