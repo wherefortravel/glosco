@@ -48,8 +48,8 @@ fn maint_thread(path: String, period: Duration, timeout: Duration) {
             // db.trace(Some(|s| println!("{}", s)));
             db.execute("
                 INSERT INTO state
-                (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, close, pkind, pcode)
-                SELECT :now, :now, ident, peer, srchost, srcport, dsthost, dstport, :tcp, :timeout, NULL, NULL
+                (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, state, close, pkind, pcode)
+                SELECT :now, :now, ident, peer, srchost, srcport, dsthost, dstport, :tcp, state, :timeout, pkind, pcode
                 FROM latest_ins
                 WHERE close IS NOT :timeout AND proto = :tcp AND instime < :threshold;
             ", named_params! {
