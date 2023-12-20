@@ -1,7 +1,7 @@
 use std::{net::{TcpListener, SocketAddr, TcpStream}, thread, time::{SystemTime, Duration}};
 
 use clap::{arg, Parser, command};
-use glosco::coding::{Coder, TCP_MARK, TMOUT_MARK, CodingVec};
+use glosco::coding::{Coder, TCP_MARK, TMOUT_MARK, CodingVec, START_MARK, ACTIVE_MARK, ENDED_MARK, FAILED_MARK};
 use glosco::observe::Message;
 use rusqlite::{params, types::Null, named_params};
 
@@ -79,7 +79,7 @@ fn main() {
         db.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS state
-            (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, close, pkind, pcode);
+            (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, state, close, pkind, pcode);
             CREATE INDEX IF NOT EXISTS state_instime ON state (instime);
             CREATE INDEX IF NOT EXISTS state_conntime ON state (conntime);
             CREATE INDEX IF NOT EXISTS state_ident ON state (ident);
@@ -136,12 +136,24 @@ fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connecti
             println!("{}@{:?}: {:?}", ident, peer, message);
             let mut stmt = db.prepare_cached(
                 "INSERT INTO state
-                (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, close, pkind, pcode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                (instime, conntime, ident, peer, srchost, srcport, dsthost, dstport, proto, state, close, pkind, pcode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 "
             ).expect("failed to prepare statement");
             let now = SystemTime::now();
             match message {
+                Message::Starting(state) => {
+                    let conn = state.connection;
+                    let (src, dst) = (conn.src, conn.dst);
+                    stmt.execute(params![
+                        to_float_secs(now), to_float_secs(state.as_of),
+                        ident, peername,
+                        src.addr.to_string(), src.port,
+                        dst.addr.to_string(), dst.port,
+                        conn.protocol.number(),
+                        START_MARK, Null, Null, Null,
+                    ]).expect("failed to exec statement");
+                },
                 Message::Active(state) => {
                     let conn = state.connection;
                     let (src, dst) = (conn.src, conn.dst);
@@ -151,7 +163,7 @@ fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connecti
                         src.addr.to_string(), src.port,
                         dst.addr.to_string(), dst.port,
                         conn.protocol.number(),
-                        Null, Null, Null,
+                        ACTIVE_MARK, Null, Null, Null,
                     ]).expect("failed to exec statement");
                 },
                 Message::Ended(state, closed) => {
@@ -163,7 +175,7 @@ fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connecti
                         src.addr.to_string(), src.port,
                         dst.addr.to_string(), dst.port,
                         conn.protocol.number(),
-                        closed.number(), Null, Null,
+                        ENDED_MARK, closed.number(), Null, Null,
                     ]).expect("failed to exec statement");
                 },
                 Message::Failed(state, problem) => {
@@ -175,7 +187,7 @@ fn client_thread(mut client: TcpStream, peer: SocketAddr, db: rusqlite::Connecti
                         src.addr.to_string(), src.port,
                         dst.addr.to_string(), dst.port,
                         conn.protocol.number(),
-                        Null, problem.kind, problem.code,
+                        FAILED_MARK, Null, problem.kind, problem.code,
                     ]).expect("failed to exec statement");
                 },
                 Message::Name(state, names) => {

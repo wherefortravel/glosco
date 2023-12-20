@@ -20,6 +20,7 @@ pub const NORMAL_MARK: u8 = 1;
 pub const RESET_MARK: u8 = 2;
 pub const CLESS_MARK: u8 = 3;
 pub const TMOUT_MARK: u8 = 4;
+pub const START_MARK: u8 = 5;
 pub const ACTIVE_MARK: u8 = 1;
 pub const ENDED_MARK: u8 = 2;
 pub const FAILED_MARK: u8 = 3;
@@ -369,6 +370,10 @@ impl Coder for Name {
 impl Coder for Message {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         match self {
+            Self::Starting(state) => {
+                writer.write_all(&[START_MARK])?;
+                state.encode(writer)
+            },
             Self::Active(state) => {
                 writer.write_all(&[ACTIVE_MARK])?;
                 state.encode(writer)

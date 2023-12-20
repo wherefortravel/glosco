@@ -78,6 +78,7 @@ pub struct Name {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Message {
+    Starting(State),
     Active(State),
     Ended(State, Closed),
     Failed(State, Problem),
@@ -293,7 +294,11 @@ impl Observer {
                     Closed::Normally
                 })
             } else {
-                self.connection_open(conn)
+                if !pkt.flag_ack {
+                    self.connection_starting(conn)
+                } else {
+                    self.connection_open(conn)
+                }
             }
         } else {
             Vec::new()
@@ -392,6 +397,31 @@ impl Observer {
             }
         } else {
             let message = Message::Active(
+                State { as_of: SystemTime::now(), connection: conn }
+            );
+            self.states.insert(conn, message.clone());
+            vec![message]
+        }
+    }
+
+    // XXX macro this one of these days
+    fn connection_starting(&mut self, conn: Connection) -> Vec<Message> {
+        if let Some(Message::Starting(state)) = self.states.get(&conn) {
+            // Ensure we heartbeat some of these connections somewhat regularly
+            if SystemTime::now().duration_since(state.as_of)
+                .map(|d| d > Duration::from_secs(Self::KEEPALIVE_SECS))
+                .unwrap_or(false)
+            {
+                let message = Message::Starting(
+                    State { as_of: SystemTime::now(), connection: conn }
+                );
+                self.states.insert(conn, message.clone());
+                vec![message]
+            } else {
+                Vec::new()
+            }
+        } else {
+            let message = Message::Starting(
                 State { as_of: SystemTime::now(), connection: conn }
             );
             self.states.insert(conn, message.clone());
