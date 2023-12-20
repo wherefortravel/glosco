@@ -400,6 +400,10 @@ impl Coder for Message {
         let mut mark: u8 = 0;
         reader.read_exact(array::from_mut(&mut mark))?;
         match mark {
+            START_MARK => {
+                let state = State::decode(reader)?;
+                Ok(Self::Starting(state))
+            },
             ACTIVE_MARK => {
                 let state = State::decode(reader)?;
                 Ok(Self::Active(state))
